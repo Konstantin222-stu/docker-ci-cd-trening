@@ -1,1710 +1,855 @@
-# Docker — руководство и шпаргалка
 
-Практическое руководство по Docker: основные понятия, работа с образами и контейнерами, написание `Dockerfile`, `.dockerignore`, `docker-compose.yml`, работа с volumes, сетями, переменными окружения и отладка.
 
-В качестве практического примера используется проект:
+# CD — Docker Publish и Deployment
 
-- **Backend:** NestJS + Sequelize
-- **Database:** PostgreSQL
-- **Frontend:** React + Vite
-- **Web Server:** Nginx
-- **Orchestration:** Docker Compose
+Документация по настройке и развитию этапа **CD (Continuous Delivery / Continuous Deployment)** в учебном монорепозитории.
 
-Цель документа — не просто запустить проект в Docker, а понимать, что происходит внутри, зачем нужны конкретные настройки и как самостоятельно создавать Docker-окружение для других проектов.
+Проект состоит из двух приложений:
+
+- **Client** — Vite + React + TypeScript.
+- **Server** — NestJS + TypeScript.
+
+Автоматизация выполняется через GitHub Actions.
+
+## 1. Текущее состояние CD
+
+На данный момент реализована непрерывная доставка Docker-образов в **GitHub Container Registry (GHCR)**.
+
+После успешного прохождения проверок GitHub Actions:
+
+1. Подготавливает Docker Buildx.
+2. Авторизуется в GitHub Container Registry.
+3. Собирает Docker-образ сервера.
+4. Публикует образ сервера.
+5. Собирает Docker-образ клиента.
+6. Публикует образ клиента.
+
+Важно различать два этапа:
+
+| Этап | Назначение | Статус |
+|---|---|---|
+| Docker Build | Создание Docker-образов | Реализован |
+| Docker Push | Публикация образов в GHCR | Реализован |
+| Docker Deploy | Развёртывание на сервере | Пока не реализован |
+
+Таким образом, сейчас настроена доставка готовых Docker-образов, но не автоматический запуск приложения на VPS.
 
 ---
 
-# 1. Что такое Docker
-
-**Docker** — платформа для упаковки, распространения и запуска приложений в изолированных окружениях, которые называются контейнерами.
-
-Обычная проблема разработки:
-
-1. На компьютере разработчика установлена одна версия Node.js.
-2. На сервере установлена другая версия.
-3. У одного разработчика PostgreSQL работает на порту 5432, у другого — нет.
-4. Приложение зависит от определённых библиотек и системных настроек.
-5. При переносе проекта на другой компьютер возникают ошибки.
-
-Docker решает эту проблему: приложение запускается в заранее подготовленном окружении.
-
-Например, вместо того чтобы вручную устанавливать PostgreSQL, Node.js и Nginx на каждом компьютере, можно описать их конфигурацию и запускать через Docker.
-
-## 1.1. Основные понятия
-
-| Понятие | Что означает |
-|---|---|
-| Docker Engine | Движок, который создаёт и запускает контейнеры |
-| Dockerfile | Инструкция по созданию Docker-образа |
-| Image (образ) | Шаблон, из которого создаются контейнеры |
-| Container (контейнер) | Запущенный экземпляр образа |
-| Volume | Хранилище данных, сохраняющееся независимо от контейнера |
-| Network | Сеть, через которую контейнеры взаимодействуют друг с другом |
-| Docker Compose | Инструмент для управления несколькими контейнерами |
-| Registry | Хранилище Docker-образов, например Docker Hub |
-| Build context | Файлы, доступные Docker при сборке образа |
-
-## 1.2. Как Docker работает
-
-Упрощённая схема:
+## 2. Структура проекта
 
 ```text
-Dockerfile
-    |
-    v
-docker build
-    |
-    v
-Docker Image
-    |
-    v
-docker run
-    |
-    v
-Docker Container
-```
-
-Разберём:
-
-1. Создаём `Dockerfile` с инструкциями.
-2. Выполняем `docker build`.
-3. Docker собирает образ.
-4. Из образа создаётся контейнер.
-5. Контейнер запускает приложение.
-
-**Важно различать образ и контейнер.**
-
-Образ — это шаблон приложения. Контейнер — конкретный экземпляр этого шаблона, который может работать, останавливаться и удаляться.
-
-Из одного образа можно создать несколько контейнеров.
-
-## 1.3. Docker и виртуальные машины
-
-Docker использует механизмы изоляции операционной системы и не требует отдельной полноценной гостевой ОС для каждого контейнера.
-
-Виртуальная машина обычно содержит собственную гостевую ОС.
-
-```text
-Виртуальные машины:
-
-Компьютер
-  |
-  +-- Гипервизор
-        |
-        +-- VM 1 (ОС + приложение)
-        +-- VM 2 (ОС + приложение)
-
-
-Docker:
-
-Компьютер
-  |
-  +-- Docker Engine
-        |
-        +-- Container 1 (приложение)
-        +-- Container 2 (приложение)
-        +-- Container 3 (приложение)
-```
-
-Контейнеры обычно легче виртуальных машин, быстрее создаются и удобны для разработки и развёртывания приложений.
-
----
-
-# 2. Установка и проверка Docker
-
-Для Windows удобно использовать Docker Desktop с WSL 2.
-
-Официальный сайт:
-
-https://www.docker.com/products/docker-desktop/
-
-После установки открой Docker Desktop и дождись запуска Docker Engine.
-
-Проверка установки:
-
-```powershell
-# Версия Docker
-docker --version
-
-# Версия Docker Compose
-docker compose version
-
-# Информация о Docker Engine
-docker info
-
-# Проверка запуска тестового контейнера
-docker run hello-world
-```
-
-Если `hello-world` успешно запускается, Docker работает.
-
-## 2.1. Docker CLI
-
-Docker CLI — интерфейс командной строки, через который мы управляем Docker.
-
-Например:
-
-```powershell
-docker ps
-docker images
-docker run nginx
-docker stop container_name
-```
-
-Docker Desktop предоставляет графический интерфейс, но основные рабочие команды удобнее запоминать именно через терминал.
-
----
-
-# 3. Работа с Docker-образами (Images)
-
-Образ — основа контейнера.
-
-Можно использовать готовые образы из Docker Hub или создавать собственные.
-
-Docker Hub:
-
-https://hub.docker.com/
-
-Например, готовые образы:
-
-- `node:24-alpine` — Node.js на Alpine Linux.
-- `postgres:16-alpine` — PostgreSQL.
-- `nginx:alpine` — Nginx.
-- `redis:alpine` — Redis.
-
-## 3.1. Основные команды
-
-```powershell
-# Скачать образ
-docker pull nginx:alpine
-
-# Посмотреть скачанные образы
-docker images
-
-# Более подробный список
-docker image ls
-
-# Посмотреть информацию об образе
-docker image inspect nginx:alpine
-
-# Удалить образ
-docker rmi nginx:alpine
-
-# Удалить неиспользуемые образы
-docker image prune
-
-# Удалить все неиспользуемые образы
-docker image prune -a
-```
-
-Обрати внимание:
-
-`nginx` — имя образа.
-
-`alpine` — тег, обозначающий конкретный вариант образа.
-
-Тег позволяет использовать определённую версию или разновидность образа.
-
-Например:
-
-```text
-node:24-alpine
-node:22-alpine
-node:20-alpine
-postgres:16-alpine
-nginx:alpine
-```
-
-Для воспроизводимых сборок желательно указывать конкретную версию, а не использовать `latest`.
-
----
-
-# 4. Работа с контейнерами
-
-Контейнер — запущенный экземпляр Docker-образа.
-
-## 4.1. Создание и запуск контейнера
-
-```powershell
-# Запустить Nginx
-docker run nginx
-
-# Запустить в фоновом режиме
-docker run -d nginx
-
-# Запустить с именем
-docker run -d --name my-nginx nginx
-
-# Запустить с пробросом портов
-docker run -d --name my-nginx -p 8080:80 nginx
-```
-
-Последняя команда означает:
-
-```text
--p HOST_PORT:CONTAINER_PORT
-```
-
-В нашем примере:
-
-- `8080` — порт компьютера.
-- `80` — порт внутри контейнера.
-
-Теперь Nginx доступен по адресу:
-
-http://localhost:8080
-
-## 4.2. Основные команды управления
-
-```powershell
-# Посмотреть работающие контейнеры
-docker ps
-
-# Посмотреть все контейнеры, включая остановленные
-docker ps -a
-
-# Остановить контейнер
-docker stop my-nginx
-
-# Запустить остановленный контейнер
-docker start my-nginx
-
-# Перезапустить контейнер
-docker restart my-nginx
-
-# Удалить остановленный контейнер
-docker rm my-nginx
-
-# Остановить и удалить контейнер
-docker rm -f my-nginx
-```
-
-## 4.3. Просмотр логов
-
-```powershell
-# Посмотреть логи
-docker logs my-nginx
-
-# Следить за логами в реальном времени
-docker logs -f my-nginx
-
-# Последние 100 строк
-docker logs --tail=100 my-nginx
-
-# Последние строки с временными метками
-docker logs -t --tail=50 my-nginx
-```
-
-Логи особенно полезны, если приложение не запускается или завершается с ошибкой.
-
-## 4.4. Подключение к контейнеру
-
-Иногда нужно попасть внутрь контейнера и выполнить команды.
-
-```powershell
-# Открыть терминал внутри контейнера
-docker exec -it my-nginx sh
-```
-
-Пояснение:
-
-- `exec` — выполнить команду внутри работающего контейнера.
-- `-i` — оставить ввод открытым.
-- `-t` — выделить терминал.
-- `sh` — запустить командную оболочку.
-
-Если внутри образа установлен Bash:
-
-```powershell
-docker exec -it my-nginx bash
-```
-
-В Alpine-образах обычно используется `sh`, а не `bash`.
-
-Выйти из контейнера:
-
-```bash
-exit
-```
-
-Посмотреть процессы внутри контейнера:
-
-```powershell
-docker top my-nginx
-```
-
-Посмотреть использование ресурсов:
-
-```powershell
-docker stats
-```
-
----
-
-# 5. Dockerfile — создание собственного образа
-
-`Dockerfile` — текстовый файл с инструкциями, по которым Docker собирает образ.
-
-Например, если у нас есть NestJS-приложение, мы можем описать:
-
-1. Какой базовый образ использовать.
-2. В какую директорию поместить проект.
-3. Какие файлы скопировать.
-4. Как установить зависимости.
-5. Как собрать приложение.
-6. Какую команду выполнить при запуске контейнера.
-
-## 5.1. Основные инструкции Dockerfile
-
-| Инструкция | Назначение |
-|---|---|
-| `FROM` | Выбирает базовый образ |
-| `WORKDIR` | Устанавливает рабочую директорию |
-| `COPY` | Копирует файлы в образ |
-| `ADD` | Копирует файлы с дополнительными возможностями |
-| `RUN` | Выполняет команду во время сборки |
-| `ENV` | Устанавливает переменную окружения |
-| `ARG` | Создаёт переменную для этапа сборки |
-| `EXPOSE` | Документирует порт приложения |
-| `CMD` | Задаёт команду запуска по умолчанию |
-| `ENTRYPOINT` | Задаёт основную исполняемую команду |
-| `USER` | Выбирает пользователя |
-| `VOLUME` | Объявляет точку монтирования |
-| `HEALTHCHECK` | Настраивает проверку состояния контейнера |
-
-## 5.2. Простой Dockerfile для Node.js
-
-Допустим, у нас есть обычное Node.js-приложение:
-
-```text
-project/
-├── package.json
-├── package-lock.json
-├── index.js
-└── Dockerfile
-```
-
-Пример `index.js`:
-
-```javascript
-const http = require('http');
-
-const server = http.createServer((req, res) => {
-    res.end('Hello from Docker!');
-});
-
-server.listen(3000, '0.0.0.0', () => {
-    console.log('Server started on port 3000');
-});
-```
-
-Dockerfile:
-
-```dockerfile
-# Выбираем базовый образ Node.js
-FROM node:24-alpine
-
-# Рабочая директория внутри контейнера
-WORKDIR /app
-
-# Сначала копируем файлы зависимостей
-COPY package*.json ./
-
-# Устанавливаем зависимости
-RUN npm ci
-
-# Копируем остальной код
-COPY . .
-
-# Документируем используемый порт
-EXPOSE 3000
-
-# Команда запуска приложения
-CMD ["node", "index.js"]
-```
-
-## 5.3. Разбор Dockerfile
-
-**FROM**
-
-```dockerfile
-FROM node:24-alpine
-```
-
-Выбирает базовый образ, на котором будет строиться наш образ.
-
-В данном случае это Node.js версии 24 на Alpine Linux.
-
-**WORKDIR**
-
-```dockerfile
-WORKDIR /app
-```
-
-Создаёт рабочую директорию `/app` и делает её текущей.
-
-Все последующие относительные пути будут рассчитываться от неё.
-
-**COPY**
-
-```dockerfile
-COPY package*.json ./
-```
-
-Копирует `package.json` и `package-lock.json` из build context в рабочую директорию контейнера.
-
-**RUN**
-
-```dockerfile
-RUN npm ci
-```
-
-Выполняет команду во время сборки образа.
-
-`npm ci` устанавливает зависимости строго по lock-файлу.
-
-Для воспроизводимых сборок предпочтительнее использовать его, если в проекте есть актуальный `package-lock.json`.
-
-**EXPOSE**
-
-```dockerfile
-EXPOSE 3000
-```
-
-Документирует порт, который использует приложение.
-
-Важно: `EXPOSE` сам по себе не открывает порт на компьютере.
-
-Для доступа с хоста нужен `-p` при `docker run` или `ports` в Compose.
-
-**CMD**
-
-```dockerfile
-CMD ["node", "index.js"]
-```
-
-Определяет команду, которая выполняется при запуске контейнера.
-
-Формат JSON-массива называется exec form.
-
-## 5.4. Сборка собственного образа
-
-Выполняем из директории, где находится Dockerfile:
-
-```powershell
-# Собрать образ
-docker build -t my-node-app .
-
-# Посмотреть созданный образ
-docker images
-
-# Запустить контейнер
-docker run -d --name my-node-container -p 3000:3000 my-node-app
-
-# Посмотреть логи
-docker logs my-node-container
-```
-
-Разберём команду:
-
-```powershell
-docker build -t my-node-app .
-```
-
-- `docker build` — собрать образ.
-- `-t` — задать имя и тег образа.
-- `my-node-app` — имя образа.
-- `.` — текущая директория, которая используется как build context.
-
-Точка в конце обязательна для указания текущей директории в данном примере.
-
----
-
-# 6. Multi-stage builds
-
-Multi-stage build — способ создавать образы с несколькими стадиями сборки.
-
-Например, для NestJS нам нужны все зависимости и TypeScript-компилятор, чтобы собрать проект.
-
-Но для запуска готового приложения компилятор и dev-зависимости обычно не нужны.
-
-Поэтому можно разделить сборку на две стадии:
-
-```text
-Stage 1: builder
-    |
-    | Установка всех зависимостей
-    | Компиляция TypeScript
-    | Получение dist/
-    |
-    v
-Stage 2: runner
-    |
-    | Установка production-зависимостей
-    | Копирование dist/
-    | Запуск приложения
-    |
-    v
-Готовый образ
-```
-
-Пример Dockerfile для NestJS:
-
-```dockerfile
-# -------------------------
-# Stage 1: Builder
-# -------------------------
-
-FROM node:24-alpine AS builder
-
-WORKDIR /app
-
-COPY package*.json ./
-
-RUN npm ci
-
-COPY . .
-
-RUN npm run build
-
-
-# -------------------------
-# Stage 2: Runner
-# -------------------------
-
-FROM node:24-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV=production
-
-COPY package*.json ./
-
-RUN npm ci --omit=dev && npm cache clean --force
-
-COPY --from=builder /app/dist ./dist
-
-EXPOSE 3001
-
-CMD ["node", "dist/main.js"]
-```
-
-Здесь:
-
-- `AS builder` — присваивает имя первой стадии.
-- `AS runner` — создаёт вторую стадию.
-- `COPY --from=builder` — копирует файлы из предыдущей стадии.
-- `npm ci --omit=dev` — устанавливает только production-зависимости.
-
-Итоговый образ не содержит исходники TypeScript, dev-зависимости и инструменты сборки.
-
-Это уменьшает размер образа и количество ненужных компонентов.
-
-**Когда использовать Multi-stage:**
-
-- NestJS и другие TypeScript-приложения.
-- React + Vite.
-- Next.js (в зависимости от выбранной стратегии сборки).
-- Приложения, которым для сборки нужны дополнительные инструменты.
-
----
-
-# 7. .dockerignore — исключение файлов
-
-`.dockerignore` — файл, который определяет, какие файлы и директории не нужно передавать в build context.
-
-Он похож на `.gitignore`, но работает при сборке Docker-образа.
-
-Например, нам не нужно копировать локальный `node_modules` в контейнер, потому что зависимости должны устанавливаться внутри Docker.
-
-Пример `.dockerignore` для Node.js:
-
-```dockerignore
-node_modules
-dist
-coverage
-
-.git
-.gitignore
-
-.env
-.env.*
-!.env.example
-
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
-
-Dockerfile*
-docker-compose*
-.dockerignore
-
-.vscode
-.idea
-
-*.log
-.DS_Store
-```
-
-## 7.1. Зачем нужен .dockerignore
-
-Предположим, у нас есть:
-
-```text
-project/
-├── node_modules/       # 500 MB
-├── src/
-├── dist/
-├── .git/
-├── package.json
-└── Dockerfile
-```
-
-Если не использовать `.dockerignore`, Docker может передавать лишние файлы в контекст сборки.
-
-Это приводит к:
-
-- Увеличению времени сборки.
-- Увеличению объёма передаваемых данных.
-- Проблемам с кэшированием.
-- Попаданию локальных файлов в образ.
-- Риску случайно включить секреты.
-
-## 7.2. Важный момент
-
-`.dockerignore` действует на build context, а не просто на весь компьютер.
-
-Если в Dockerfile указано:
-
-```dockerfile
-COPY . .
-```
-
-Docker копирует содержимое контекста сборки с учётом `.dockerignore`.
-
-Поэтому важно понимать, откуда именно выполняется `docker build` и какую директорию ты передаёшь в качестве контекста.
-
----
-
-# 8. Docker Compose
-
-Docker Compose — инструмент для описания и управления несколькими связанными контейнерами.
-
-Без Compose нам пришлось бы запускать каждый сервис отдельно:
-
-```powershell
-docker run -d --name database postgres:16-alpine
-
-docker run -d --name backend -p 3001:3001 my-api
-
-docker run -d --name frontend -p 5173:80 my-web
-```
-
-Также пришлось бы вручную настраивать сети, переменные окружения, volumes и другие параметры.
-
-Compose позволяет описать всё это в одном YAML-файле.
-
-Обычно используется файл:
-
-```text
-docker-compose.yml
-```
-
-Современная команда:
-
-```powershell
-docker compose
-```
-
-Важно: сейчас не нужно указывать устаревшую отдельную команду `docker-compose`, если у тебя установлен актуальный Docker Compose Plugin.
-
-## 8.1. Основные понятия Compose
-
-| Параметр | Назначение |
-|---|---|
-| `services` | Описывает контейнеры приложения |
-| `image` | Использует готовый образ |
-| `build` | Собирает образ из Dockerfile |
-| `container_name` | Задаёт имя контейнера |
-| `ports` | Пробрасывает порты |
-| `environment` | Передаёт переменные окружения |
-| `env_file` | Загружает переменные из файла |
-| `volumes` | Подключает хранилища или директории |
-| `networks` | Настраивает сети |
-| `depends_on` | Определяет порядок запуска и зависимости |
-| `restart` | Настраивает автоматический перезапуск |
-| `healthcheck` | Проверяет состояние сервиса |
-
-## 8.2. Простейший docker-compose.yml
-
-```yaml
-services:
-  web:
-    image: nginx:alpine
-    ports:
-      - "8080:80"
-```
-
-Запуск:
-
-```powershell
-docker compose up -d
-```
-
-Открываем:
-
-http://localhost:8080
-
-Остановка:
-
-```powershell
-docker compose down
-```
-
-Compose автоматически создаёт сеть проекта и запускает описанный сервис.
-
----
-
-# 9. Порты и сети Docker
-
-## 9.1. Проброс портов
-
-Контейнеры имеют собственные сетевые интерфейсы.
-
-Чтобы обращаться к приложению из браузера на компьютере, обычно нужно пробросить порт.
-
-Формат:
-
-```yaml
-ports:
-  - "HOST_PORT:CONTAINER_PORT"
-```
-
-Например:
-
-```yaml
-ports:
-  - "3001:3001"
-```
-
-Это означает:
-
-```text
-Компьютер:3001
-       |
-       v
-Контейнер:3001
-       |
-       v
-NestJS
-```
-
-Если PostgreSQL работает внутри Docker на порту 5432, а на компьютере этот порт уже занят, можно использовать:
-
-```yaml
-ports:
-  - "5433:5432"
-```
-
-Тогда:
-
-- Из компьютера подключаемся к `localhost:5433`.
-- Из другого контейнера подключаемся к `db:5432`.
-
-Это важное различие.
-
-## 9.2. Docker Network
-
-Compose по умолчанию создаёт общую сеть для сервисов проекта.
-
-Допустим, есть:
-
-```yaml
-services:
-  db:
-    image: postgres:16-alpine
-
-  api:
-    image: my-api
-```
-
-Контейнер `api` может обращаться к базе по адресу:
-
-```text
-db:5432
-```
-
-Почему?
-
-Потому что `db` — имя сервиса, которое Docker DNS разрешает внутри сети.
-
-Не нужно использовать `localhost` для обращения к другому контейнеру.
-
-**Правильно внутри API-контейнера:**
-
-```env
-DB_HOST=db
-DB_PORT=5432
-```
-
-**Неправильно:**
-
-```env
-DB_HOST=localhost
-DB_PORT=5433
-```
-
-`localhost` внутри контейнера указывает на сам контейнер, а не на компьютер или соседний контейнер.
-
-## 9.3. Ручное создание сети
-
-```powershell
-# Создать сеть
-docker network create app-network
-
-# Посмотреть сети
-docker network ls
-
-# Посмотреть информацию о сети
-docker network inspect app-network
-
-# Удалить сеть
-docker network rm app-network
-```
-
-Запустить контейнер в определённой сети:
-
-```powershell
-docker run -d --name database --network app-network postgres:16-alpine
-```
-
----
-
-# 10. Volumes — хранение данных
-
-Контейнеры могут быть удалены и созданы заново.
-
-Если данные хранятся только внутри файловой системы контейнера, при его удалении они могут потеряться.
-
-Для хранения данных используются volumes.
-
-Особенно важно это для баз данных.
-
-## 10.1. Типы хранения
-
-**Named volume**
-
-Управляемое Docker хранилище:
-
-```yaml
-volumes:
-  - pg_data:/var/lib/postgresql/data
-```
-
-**Bind mount**
-
-Подключение конкретной директории компьютера:
-
-```yaml
-volumes:
-  - ./server:/app
-```
-
-**Anonymous volume**
-
-Том без явно заданного имени:
-
-```yaml
-volumes:
-  - /app/node_modules
-```
-
-## 10.2. Создание и просмотр volumes
-
-```powershell
-# Создать volume
-docker volume create pg_data
-
-# Список volumes
-docker volume ls
-
-# Информация о volume
-docker volume inspect pg_data
-
-# Удалить volume
-docker volume rm pg_data
-
-# Удалить неиспользуемые volumes
-docker volume prune
-```
-
-**Внимание:** удаление volume может привести к безвозвратной потере данных базы.
-
-## 10.3. Bind mount для разработки
-
-Например:
-
-```yaml
-services:
-  api:
-    build: ./server
-    volumes:
-      - ./server:/app
-      - /app/node_modules
-```
-
-Первый mount синхронизирует код с компьютера в контейнер.
-
-Второй сохраняет отдельную директорию `node_modules` внутри Docker, чтобы локальная папка с зависимостями не перезаписывала контейнерную.
-
-Такой подход удобен для разработки с hot reload.
-
-Для production обычно не монтируют исходный код с компьютера в контейнер.
-
----
-
-# 11. Переменные окружения (.env)
-
-Переменные окружения позволяют передавать настройки приложению без жёсткого прописывания их в исходниках.
-
-Например:
-
-```env
-DB_HOST=db
-DB_PORT=5432
-DB_DATABASE=app_db
-DB_USERNAME=postgres
-DB_PASSWORD=secret
-```
-
-В Compose можно использовать:
-
-```yaml
-services:
-  api:
-    environment:
-      NODE_ENV: production
-      DB_HOST: db
-      DB_PORT: 5432
-```
-
-Или:
-
-```yaml
-services:
-  api:
-    env_file:
-      - .env.docker
-```
-
-## 11.1. Разница между env_file и --env-file
-
-Это важный момент.
-
-**env_file в docker-compose.yml**
-
-```yaml
-services:
-  api:
-    env_file:
-      - .env.docker
-```
-
-Передаёт переменные непосредственно внутрь контейнера.
-
-**--env-file в командной строке**
-
-```powershell
-docker compose --env-file .env.docker up -d
-```
-
-Использует файл для подстановки переменных в сам Compose YAML.
-
-Например:
-
-```yaml
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${DB_DATABASE}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-```
-
-В этом случае Compose подставляет значения из `.env.docker`.
-
-Эти механизмы можно использовать одновременно.
-
-## 11.2. Безопасность
-
-Не нужно хранить реальные пароли, API-ключи и токены в Git.
-
-Добавь в `.gitignore`:
-
-```gitignore
-.env
-.env.*
-!.env.example
-```
-
-Если используешь `.env.docker`, добавь его в исключения.
-
-Для production-среды лучше использовать секреты и механизмы управления конфиденциальными данными, предусмотренные платформой развёртывания.
-
----
-
-# 12. Практический проект: NestJS + PostgreSQL + React
-
-Теперь соберём всё вместе.
-
-## 12.1. Структура проекта
-
-```text
-project/
+docker/
 │
-├── docker/
-│   ├── docker-compose.yml
-│   ├── .env.docker
-│   │
-│   ├── server/
-│   │   ├── Dockerfile
-│   │   └── .dockerignore
-│   │
-│   └── client/
-│       ├── Dockerfile
-│       └── .dockerignore
+├── .github/
+│   └── workflows/
+│       └── pipeline.yml          # Общий CI/CD pipeline
+│
+├── client/
+│   ├── src/
+│   ├── Dockerfile                # Сборка Client image
+│   └── package.json
 │
 ├── server/
 │   ├── src/
-│   ├── package.json
-│   └── package-lock.json
+│   ├── Dockerfile                # Сборка Server image
+│   └── package.json
 │
-└── client/
-    ├── src/
-    ├── package.json
-    └── package-lock.json
+├── docker-compose.yml
+├── .env
+└── README.md
 ```
 
-Здесь `docker/` содержит инфраструктурные файлы.
+Основная конфигурация автоматизации находится в:
 
-Backend и frontend остаются самостоятельными проектами.
-
-## 12.2. Backend Dockerfile
-
-Файл `docker/server/Dockerfile`:
-
-```dockerfile
-# Stage 1: сборка
-FROM node:24-alpine AS builder
-
-WORKDIR /app
-
-COPY package*.json ./
-
-RUN npm ci
-
-COPY . .
-
-RUN npm run build
-
-
-# Stage 2: запуск
-FROM node:24-alpine AS runner
-
-WORKDIR /app
-
-ENV NODE_ENV=production
-
-COPY package*.json ./
-
-RUN npm ci --omit=dev && npm cache clean --force
-
-COPY --from=builder /app/dist ./dist
-
-EXPOSE 3001
-
-CMD ["node", "dist/main.js"]
+```text
+.github/workflows/pipeline.yml
 ```
 
-Backend `.dockerignore`:
-
-```dockerignore
-node_modules
-dist
-coverage
-.git
-.env
-.env.*
-!.env.example
-*.log
-```
-
-Важно: этот пример предполагает, что NestJS собирается в `dist/main.js`, а production-зависимости достаточны для запуска приложения.
-
-## 12.3. Frontend Dockerfile
-
-Файл `docker/client/Dockerfile`:
-
-```dockerfile
-# Stage 1: сборка React + Vite
-FROM node:24-alpine AS builder
-
-WORKDIR /app
-
-COPY package*.json ./
-
-RUN npm ci
-
-COPY . .
-
-RUN npm run build
-
-
-# Stage 2: Nginx
-FROM nginx:alpine AS runner
-
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
-```
-
-Frontend `.dockerignore`:
-
-```dockerignore
-node_modules
-dist
-coverage
-.git
-.env.local
-.env.*.local
-*.log
-```
-
-Nginx используется для раздачи готовой статической сборки React.
-
-Если в React используется клиентская маршрутизация, например React Router, дополнительно потребуется настроить Nginx с fallback на `index.html`.
-
-## 12.4. Файл переменных окружения
-
-Файл `docker/.env.docker`:
-
-```env
-# PostgreSQL
-DB_DATABASE=app_db
-DB_USERNAME=postgres
-DB_PASSWORD=change_me
-
-# Backend
-PORT=3001
-NODE_ENV=production
-DB_HOST=db
-DB_PORT=5432
-```
-
-Это пример для локальной демонстрации. Для реального проекта используй собственные надёжные секреты.
-
-## 12.5. Docker Compose
-
-Файл `docker/docker-compose.yml`:
-
-```yaml
-services:
-
-  # -------------------------
-  # PostgreSQL
-  # -------------------------
-  db:
-    image: postgres:16-alpine
-    container_name: project-db
-
-    restart: unless-stopped
-
-    environment:
-      POSTGRES_DB: ${DB_DATABASE}
-      POSTGRES_USER: ${DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-
-    ports:
-      - "5433:5432"
-
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_DATABASE}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-
-  # -------------------------
-  # NestJS API
-  # -------------------------
-  api:
-    build:
-      context: ../server
-      dockerfile: ../docker/server/Dockerfile
-
-    container_name: project-api
-
-    restart: unless-stopped
-
-    env_file:
-      - .env.docker
-
-    environment:
-      DB_HOST: db
-      DB_PORT: 5432
-
-    ports:
-      - "3001:3001"
-
-    depends_on:
-      db:
-        condition: service_healthy
-
-
-  # -------------------------
-  # React + Nginx
-  # -------------------------
-  web:
-    build:
-      context: ../client
-      dockerfile: ../docker/client/Dockerfile
-
-    container_name: project-web
-
-    restart: unless-stopped
-
-    ports:
-      - "5173:80"
-
-    depends_on:
-      - api
-
-
-# -------------------------
-# Volumes
-# -------------------------
-volumes:
-  pg_data:
-```
-
-Обрати внимание: здесь `build.context` указывает на корневую директорию соответствующего приложения, а `dockerfile` задаёт путь к Dockerfile относительно build context. Для Dockerfile, лежащего вне build context, такая конфигурация некорректна.
-
-Для данной структуры нужно использовать Dockerfile внутри контекста приложения либо перенести Dockerfile в соответствующую директорию. Например, более простой и надёжный вариант:
-
-```yaml
-api:
-  build:
-    context: ../server
-    dockerfile: Dockerfile
-```
-
-И аналогично для frontend:
-
-```yaml
-web:
-  build:
-    context: ../client
-    dockerfile: Dockerfile
-```
-
-В таком случае Dockerfile должны находиться в `server/Dockerfile` и `client/Dockerfile`. Если хочешь хранить их в `docker/server/` и `docker/client/`, нужно изменить build context так, чтобы Dockerfile и необходимые файлы были доступны при сборке.
-
-**Важное замечание по frontend:** переменные `VITE_*` подставляются во время сборки Vite, а не автоматически при запуске Nginx. Если меняешь адрес API, frontend нужно пересобрать или отдельно реализовать runtime-конфигурацию.
-
-Также проверь, что API слушает `0.0.0.0`, а не только `localhost`, и что CORS разрешает адрес frontend.
+Именно в этом файле описаны зависимости между задачами, условия публикации и действия Docker.
 
 ---
 
-# 13. Основные команды Docker Compose
+## 3. Как устроен текущий CD pipeline
 
-Команды выполняются из директории, где расположен `docker-compose.yml`.
-
-В нашем случае — `docker/`.
-
-## 13.1. Запуск проекта
-
-```powershell
-# Собрать образы и запустить все сервисы
-docker compose --env-file .env.docker up -d --build
-
-# Запустить без пересборки
-docker compose --env-file .env.docker up -d
-
-# Запустить конкретный сервис
-docker compose --env-file .env.docker up -d api
-```
-
-Параметры:
-
-- `up` — создать и запустить сервисы.
-- `-d` — запустить в фоновом режиме.
-- `--build` — пересобрать образы перед запуском.
-
-## 13.2. Проверка состояния
-
-```powershell
-# Состояние сервисов
-docker compose --env-file .env.docker ps
-
-# Список всех контейнеров
-docker ps -a
-
-# Список образов
-docker images
-
-# Использование ресурсов
-docker stats
-```
-
-## 13.3. Логи
-
-```powershell
-# Логи всех сервисов
-docker compose --env-file .env.docker logs
-
-# Следить за логами
-docker compose --env-file .env.docker logs -f
-
-# Логи API
-docker compose --env-file .env.docker logs -f api
-
-# Последние 50 строк API
-docker compose --env-file .env.docker logs --tail=50 api
-
-# Логи базы данных
-docker compose --env-file .env.docker logs -f db
-```
-
-## 13.4. Остановка
-
-```powershell
-# Остановить и удалить контейнеры и сеть проекта
-docker compose --env-file .env.docker down
-
-# Остановить сервисы, не удаляя контейнеры
-docker compose --env-file .env.docker stop
-
-# Запустить остановленные сервисы
-docker compose --env-file .env.docker start
-
-# Перезапустить сервисы
-docker compose --env-file .env.docker restart
-```
-
-## 13.5. Пересборка
-
-```powershell
-# Пересобрать все образы
-docker compose --env-file .env.docker build
-
-# Пересобрать только API
-docker compose --env-file .env.docker build api
-
-# Пересобрать API без использования кэша
-docker compose --env-file .env.docker build --no-cache api
-
-# Пересобрать и запустить API
-docker compose --env-file .env.docker up -d --build api
-```
-
-## 13.6. Полный сброс
-
-```powershell
-# Удалить контейнеры и сеть
-docker compose --env-file .env.docker down
-
-# Удалить контейнеры, сеть и volumes
-docker compose --env-file .env.docker down -v
-```
-
-**Осторожно:** `down -v` удаляет именованные volumes проекта, в том числе `pg_data`. Данные PostgreSQL будут потеряны.
-
----
-
-# 14. Полезные команды для диагностики
-
-```powershell
-# Информация о контейнере
-docker inspect project-api
-
-# Информация об образе
-docker image inspect my-api
-
-# Список сетей
-docker network ls
-
-# Список volumes
-docker volume ls
-
-# Использование диска Docker
-docker system df
-
-# Очистить неиспользуемые ресурсы
-docker system prune
-
-# Очистить неиспользуемые образы, контейнеры и сети
-docker system prune -a
-
-# Проверить конфигурацию Compose
-docker compose --env-file .env.docker config
-
-# Посмотреть итоговую конфигурацию с подставленными переменными
-docker compose --env-file .env.docker config
-```
-
-Не запускай команды очистки без понимания последствий.
-
-`docker system prune -a` удаляет неиспользуемые образы, поэтому в следующий раз некоторые образы придётся скачивать или собирать заново.
-
----
-
-# 15. Типичные ошибки и способы решения
-
-## 15.1. Port is already allocated
-
-Ошибка:
+Общая последовательность:
 
 ```text
-Bind for 0.0.0.0:5433 failed:
-port is already allocated
+                 GitHub Repository
+                         |
+                         v
+                  Push в master
+                         |
+                         v
+                 GitHub Actions
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+          Server CI              Client CI
+             |                       |
+             +-----------+-----------+
+                         |
+                         v
+                 Успешные проверки
+                         |
+                         v
+                  Docker Publish
+                         |
+             +-----------+-----------+
+             |                       |
+             v                       v
+       Build Server Image      Build Client Image
+             |                       |
+             v                       v
+        Push в GHCR              Push в GHCR
+             |                       |
+             +-----------+-----------+
+                         |
+                         v
+                Docker-образы готовы
 ```
 
-Причина: порт уже занят другим процессом или контейнером.
+Важный момент: публикация Docker-образов не должна выполняться, если проверки сервера или клиента завершились ошибкой.
 
-Проверяем контейнеры:
+### 3.1. Зависимости между jobs
 
-```powershell
-docker ps
-```
-
-Останавливаем ненужный контейнер:
-
-```powershell
-docker stop container_name
-```
-
-Либо меняем внешний порт:
+В `pipeline.yml` используется:
 
 ```yaml
-ports:
-  - "5434:5432"
+needs:
+  - server-ci
+  - client-ci
 ```
 
-## 15.2. ENOTFOUND db
+`needs` определяет зависимость одной задачи от других.
 
-Ошибка:
+В нашем случае `docker-publish` зависит сразу от двух задач:
+
+- `server-ci`;
+- `client-ci`.
+
+Это означает, что публикация начнётся только после успешного выполнения обеих задач.
+
+Если одна из них завершится ошибкой, `docker-publish` будет пропущен.
+
+### 3.2. Условие запуска публикации
+
+В конфигурации используется:
+
+```yaml
+if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+```
+
+Разберём условие:
+
+- `github.event_name` — событие, которое запустило workflow.
+- `push` — отправка изменений в репозиторий.
+- `github.ref` — ссылка на ветку или тег.
+- `refs/heads/master` — конкретная ветка `master`.
+- `&&` — логическое И.
+
+Следовательно, Docker Publish запускается только при одновременном выполнении двух условий:
+
+1. Workflow запущен событием `push`.
+2. Изменения отправлены непосредственно в `master`.
+
+При запуске через `pull_request` публикация не выполняется.
+
+Это защищает GHCR от публикации образов при каждом промежуточном изменении в Pull Request.
+
+---
+
+## 4. GitHub Container Registry (GHCR)
+
+**GitHub Container Registry** — хранилище Docker-образов, интегрированное с GitHub.
+
+Оно позволяет хранить готовые образы приложений и получать их с помощью Docker.
+
+Вместо того чтобы каждый раз собирать приложение непосредственно на сервере, можно заранее создать Docker-образ и опубликовать его в реестре.
+
+После этого VPS сможет скачать готовый образ и запустить контейнер.
+
+### 4.1. Адрес реестра
+
+Для GHCR используется:
 
 ```text
-SequelizeHostNotFoundError:
-getaddrinfo ENOTFOUND db
+ghcr.io
 ```
 
-Причина: API не может найти сервис `db` в Docker-сети.
-
-Проверяем:
-
-```env
-DB_HOST=db
-DB_PORT=5432
-```
-
-Проверяем сеть:
-
-```powershell
-docker network ls
-docker inspect project-api
-```
-
-Убеждаемся, что сервисы подключены к общей сети Compose.
-
-## 15.3. Connection refused
-
-Ошибка:
+Полный адрес Docker-образа состоит из нескольких частей:
 
 ```text
-ECONNREFUSED
+ghcr.io/OWNER/IMAGE:TAG
 ```
 
-Возможные причины:
+Где:
 
-- База данных ещё не запустилась.
-- Приложение слушает неправильный порт.
-- Неправильно настроен адрес подключения.
-- Сервис завершился с ошибкой.
+- `ghcr.io` — адрес реестра.
+- `OWNER` — владелец репозитория или организация.
+- `IMAGE` — название Docker-образа.
+- `TAG` — версия образа.
 
-Проверяем:
+### 4.2. Образы текущего проекта
 
-```powershell
-docker compose ps
+Сервер:
 
-docker compose logs db
-
-docker compose logs api
+```text
+ghcr.io/konstantin222-stu/docker-ci-cd-trening-server
 ```
 
-Для PostgreSQL полезен `healthcheck` и `depends_on` с `condition: service_healthy`.
+Клиент:
 
-## 15.4. Изменения кода не отображаются
-
-Если используется production Dockerfile, исходный код копируется в образ при сборке.
-
-После изменения кода необходимо пересобрать образ:
-
-```powershell
-docker compose up -d --build api
+```text
+ghcr.io/konstantin222-stu/docker-ci-cd-trening-client
 ```
 
-Для frontend:
+Для каждого приложения публикуются два тега:
 
-```powershell
-docker compose up -d --build web
+```text
+latest
+sha-<COMMIT_SHA>
 ```
-
-## 15.5. Ошибка при установке зависимостей
-
-Проверь:
-
-- Существует ли `package-lock.json`.
-- Совпадает ли он с `package.json`.
-- Правильно ли настроен `.dockerignore`.
-- Доступен ли npm registry.
-- Подходит ли версия Node.js.
-
-Если используешь `npm ci`, lock-файл обязателен.
-
-## 15.6. Frontend не может обратиться к API
-
-Проверь адрес API, зашитый в Vite.
 
 Например:
 
-```env
-VITE_API_URL=http://localhost:3001/api
+```text
+ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:latest
+
+ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:sha-01fcec1...
 ```
 
-Если запрос выполняется браузером пользователя, `localhost` — это компьютер пользователя, а не контейнер frontend.
+### 4.3. Зачем нужны два тега?
 
-Если frontend и API доступны через разные внешние порты, браузер может обращаться к API через `http://localhost:3001`.
+**latest**
 
-Если запрос выполняется серверным кодом внутри контейнера, используй имя сервиса:
+Указывает на последний опубликованный образ с таким тегом.
+
+Например:
+
+```bash
+docker pull ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:latest
+```
+
+Удобен для получения актуальной версии приложения.
+
+**sha-...**
+
+Содержит идентификатор конкретного Git-коммита, из которого был собран образ.
+
+Например:
+
+```bash
+docker pull ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:sha-01fcec1...
+```
+
+Позволяет получить конкретную версию приложения.
+
+Это особенно полезно для отката: если новая версия работает неправильно, можно запустить предыдущий образ по его SHA-тегу.
+
+Рекомендуется использовать SHA-теги для воспроизводимых развёртываний, а `latest` — для удобного получения последней версии.
+
+---
+
+## 5. Разбор Docker Publish
+
+В текущем `pipeline.yml` публикация состоит из нескольких шагов.
+
+### 5.1. Разрешения workflow
+
+На уровне всего workflow:
+
+```yaml
+permissions:
+  contents: read
+```
+
+Это минимальное разрешение, необходимое для чтения содержимого репозитория.
+
+Но для публикации Docker-образов этого недостаточно.
+
+Поэтому внутри `docker-publish` задаются дополнительные права:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+```
+
+`packages: write` разрешает workflow публиковать пакеты в GitHub Packages, включая Docker-образы в GHCR.
+
+Важно: права задаются непосредственно для задачи публикации, поскольку именно ей требуется доступ на запись.
+
+### 5.2. Подготовка Docker Buildx
+
+```yaml
+- name: Setup Docker Buildx
+  uses: docker/setup-buildx-action@v3
+```
+
+Docker Buildx — инструмент для расширенной сборки Docker-образов.
+
+Он используется вместе с Docker BuildKit и предоставляет дополнительные возможности сборки.
+
+В нашем pipeline Buildx подготавливает окружение, в котором следующие шаги смогут собирать Docker-образы.
+
+### 5.3. Авторизация в GHCR
+
+```yaml
+- name: Login to GitHub Container Registry
+  uses: docker/login-action@v3
+  with:
+    registry: ghcr.io
+    username: ${{ github.actor }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Перед публикацией Docker должен авторизоваться в реестре.
+
+Разберём параметры:
+
+| Параметр | Назначение |
+|---|---|
+| `registry` | Адрес реестра |
+| `username` | Пользователь, от имени которого выполняется авторизация |
+| `password` | Токен для авторизации |
+
+`github.actor` — пользователь или субъект, от имени которого запущен workflow.
+
+`secrets.GITHUB_TOKEN` — автоматически предоставляемый GitHub токен для текущего workflow.
+
+Отдельно создавать этот токен вручную не требуется.
+
+Важное условие: у задачи должны быть права `packages: write`.
+
+### 5.4. Сборка и публикация Server
+
+```yaml
+- name: Build and push Server image
+  uses: docker/build-push-action@v6
+  with:
+    context: ./server
+    push: true
+    tags: |
+      ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:latest
+      ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:sha-${{ github.sha }}
+```
+
+Разберём параметры:
+
+**context**
+
+```yaml
+context: ./server
+```
+
+Указывает директорию, которую Docker будет использовать как контекст сборки.
+
+В ней находится `Dockerfile` сервера и необходимые для сборки файлы.
+
+**push**
+
+```yaml
+push: true
+```
+
+Разрешает отправить собранный Docker-образ в указанный реестр.
+
+Если установить `false`, образ будет собран, но не опубликован.
+
+**tags**
+
+```yaml
+tags: |
+  ...:latest
+  ...:sha-${{ github.sha }}
+```
+
+Указывает теги, под которыми образ будет опубликован.
+
+`github.sha` — полный SHA-идентификатор коммита, который запустил workflow.
+
+Таким образом, один и тот же образ публикуется сразу под двумя тегами.
+
+### 5.5. Сборка и публикация Client
+
+```yaml
+- name: Build and push Client image
+  uses: docker/build-push-action@v6
+  with:
+    context: ./client
+    push: true
+    tags: |
+      ghcr.io/konstantin222-stu/docker-ci-cd-trening-client:latest
+      ghcr.io/konstantin222-stu/docker-ci-cd-trening-client:sha-${{ github.sha }}
+```
+
+Логика аналогична серверу.
+
+Отличается только:
+
+```yaml
+context: ./client
+```
+
+Теперь Docker использует Dockerfile и файлы фронтенда.
+
+В результате в GHCR публикуются два самостоятельных образа:
+
+- Server;
+- Client.
+
+Они могут обновляться независимо друг от друга, хотя в текущем pipeline публикация выполняется в рамках одной задачи.
+
+---
+
+## 6. Как проверить опубликованные Docker-образы
+
+После успешного выполнения pipeline нужно проверить, появились ли образы в GHCR.
+
+### 6.1. Через GitHub
+
+1. Открыть репозиторий.
+2. Перейти в раздел Packages.
+3. Найти опубликованные пакеты.
+4. Открыть Server и Client.
+5. Проверить доступные версии и теги.
+
+### 6.2. Через Docker CLI
+
+Скачать сервер:
+
+```bash
+docker pull ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:latest
+```
+
+Скачать клиент:
+
+```bash
+docker pull ghcr.io/konstantin222-stu/docker-ci-cd-trening-client:latest
+```
+
+Посмотреть скачанные образы:
+
+```bash
+docker images
+```
+
+Если образы скачались успешно, значит публикация в GHCR работает.
+
+Если пакеты приватные, перед скачиванием потребуется авторизация:
+
+```bash
+docker login ghcr.io
+```
+
+Для входа используется GitHub username и подходящий токен с правом чтения пакетов (`read:packages`).
+
+Не хранить токен непосредственно в командах, конфигурациях или Git-репозитории.
+
+---
+
+## 7. Как работает CD с Docker Compose
+
+В проекте уже используется `docker-compose.yml`.
+
+Docker Compose позволяет описывать несколько контейнеров и управлять ими как одним приложением.
+
+Например, приложение может состоять из:
+
+- PostgreSQL;
+- NestJS API;
+- React Client.
+
+На текущем этапе Compose используется для локального запуска проекта.
+
+В дальнейшем его можно будет использовать и на VPS.
+
+Общая схема будущего развёртывания:
 
 ```text
-http://api:3001
+              GitHub Actions
+                     |
+                     v
+              CI завершился
+                успешно
+                     |
+                     v
+              Docker Build
+                     |
+                     v
+               Docker Push
+                     |
+                     v
+                  GHCR
+                     |
+                     v
+              VPS получает
+               новую версию
+                     |
+                     v
+              docker compose
+                  pull
+                     |
+                     v
+              docker compose
+                    up
+                     |
+                     v
+              Приложение работает
 ```
 
-Не путай браузерную сеть и внутреннюю Docker-сеть.
+Главная идея: GitHub Actions создаёт и публикует образы, а VPS получает их и запускает.
+
+Это позволяет разделить ответственность:
+
+- GitHub Actions отвечает за сборку и доставку.
+- GHCR отвечает за хранение образов.
+- VPS отвечает за запуск приложения.
 
 ---
 
-# 16. Практические задания для закрепления
+## 8. Будущий этап: автоматический Deploy на VPS
 
-Чтобы действительно научиться Docker, рекомендую не просто читать команды, а выполнять задания самостоятельно.
+Следующий этап развития проекта — добавить автоматическое развёртывание после публикации Docker-образов.
 
-## Уровень 1. Основы
+Для этого понадобится VPS с установленными:
 
-- [ ] Скачать образ Nginx.
-- [ ] Запустить контейнер.
-- [ ] Пробросить порт 8080:80.
-- [ ] Открыть Nginx в браузере.
-- [ ] Посмотреть логи.
-- [ ] Остановить контейнер.
-- [ ] Удалить контейнер.
-- [ ] Удалить образ.
+- Docker;
+- Docker Compose;
+- SSH-сервером.
 
-## Уровень 2. Dockerfile
+Также необходимо подготовить конфигурацию приложения на сервере.
 
-- [ ] Создать простое Node.js-приложение.
-- [ ] Написать Dockerfile.
-- [ ] Собрать собственный образ.
-- [ ] Запустить контейнер.
-- [ ] Изменить код и пересобрать образ.
-- [ ] Добавить `.dockerignore`.
-- [ ] Проверить разницу в размере build context.
+### 8.1. Что нужно подготовить на VPS
 
-## Уровень 3. Docker Compose
+Пример будущей структуры:
 
-- [ ] Создать `docker-compose.yml`.
-- [ ] Подключить Nginx.
-- [ ] Подключить PostgreSQL.
-- [ ] Настроить проброс портов.
-- [ ] Создать именованный volume.
-- [ ] Настроить общую сеть.
-- [ ] Подключить backend к PostgreSQL.
-- [ ] Передать настройки через `.env`.
+```text
+/opt/docker-project/
+│
+├── docker-compose.yml
+└── .env
+```
 
-## Уровень 4. Production
+`docker-compose.yml` должен использовать образы из GHCR.
 
-- [ ] Написать Multi-stage Dockerfile для NestJS.
-- [ ] Написать Multi-stage Dockerfile для React + Vite.
-- [ ] Использовать Nginx для frontend.
-- [ ] Добавить healthcheck.
-- [ ] Настроить restart policy.
-- [ ] Проверить работу приложения после пересоздания контейнеров.
-- [ ] Убедиться, что данные PostgreSQL сохраняются после `docker compose down`.
-- [ ] Проверить, что секреты не попадают в Git и Docker-образы.
+Например, для API:
 
----
+```yaml
+services:
+  api:
+    image: ghcr.io/konstantin222-stu/docker-ci-cd-trening-server:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+```
 
-# 17. Полезные официальные ресурсы
+Для клиента:
 
-| Ресурс | Для чего нужен |
+```yaml
+  web:
+    image: ghcr.io/konstantin222-stu/docker-ci-cd-trening-client:latest
+    restart: unless-stopped
+```
+
+Это только иллюстрация принципа. Перед реальным деплоем Compose нужно привести в соответствие с текущими Dockerfile, переменными окружения, портами, PostgreSQL и сетевой конфигурацией проекта.
+
+### 8.2. Secrets для подключения к VPS
+
+GitHub Actions должен получить возможность подключиться к серверу.
+
+Для этого можно использовать SSH.
+
+В GitHub:
+
+1. Открыть Settings репозитория.
+2. Перейти в Secrets and variables.
+3. Выбрать Actions.
+4. Создать необходимые secrets.
+
+Например:
+
+| Secret | Назначение |
 |---|---|
-| https://docs.docker.com/ | Основная документация Docker |
-| https://docs.docker.com/get-started/ | Начало работы с Docker |
-| https://docs.docker.com/reference/dockerfile/ | Все инструкции Dockerfile |
-| https://docs.docker.com/compose/ | Docker Compose |
-| https://docs.docker.com/engine/storage/volumes/ | Volumes |
-| https://docs.docker.com/engine/network/ | Сети Docker |
-| https://hub.docker.com/ | Готовые Docker-образы |
+| `VPS_HOST` | IP-адрес или домен сервера |
+| `VPS_USER` | Пользователь Linux |
+| `VPS_SSH_KEY` | Приватный SSH-ключ |
+| `VPS_PORT` | SSH-порт, если отличается от стандартного |
+
+Приватный ключ нельзя помещать в YAML или коммитить в репозиторий.
+
+Также перед подключением необходимо настроить проверку SSH host key, чтобы не отключать проверку подлинности сервера.
+
+### 8.3. Добавление Deploy job
+
+В будущем в `pipeline.yml` можно добавить отдельную задачу:
+
+```yaml
+deploy:
+  name: Deploy to VPS
+  runs-on: ubuntu-latest
+
+  needs:
+    - docker-publish
+
+  if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+
+  steps:
+    - name: Deploy application
+      run: |
+        # SSH connection to VPS
+        # Pull new Docker images
+        # Restart application
+```
+
+Это схема будущей задачи, а не готовый рабочий деплой.
+
+Внутри неё предстоит реализовать:
+
+1. Подключение к VPS через SSH.
+2. Переход в директорию проекта.
+3. Авторизацию в GHCR при необходимости.
+4. Получение новых Docker-образов.
+5. Перезапуск контейнеров.
+6. Проверку состояния приложения.
+
+Основные команды на сервере будут выглядеть примерно так:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose ps
+```
+
+**Что делают команды:**
+
+`docker compose pull` — скачивает новые версии образов, указанные в Compose.
+
+`docker compose up -d` — создаёт или обновляет контейнеры и запускает их в фоновом режиме.
+
+`docker compose ps` — показывает состояние контейнеров.
+
+Важно: команда `docker compose pull` не пересобирает образы. Она получает уже опубликованные образы из реестра.
+
+### 8.4. Порядок выполнения после добавления Deploy
+
+В результате pipeline будет выглядеть так:
+
+```text
+             Server CI
+                 |
+                 |
+             Client CI
+                 |
+                 v
+          Docker Publish
+                 |
+                 v
+                GHCR
+                 |
+                 v
+             Deploy VPS
+                 |
+                 v
+          Docker Compose
+                 |
+                 v
+            Production
+```
+
+Благодаря `needs` задача Deploy будет ждать успешной публикации Docker-образов.
+
+Если публикация завершится ошибкой, развёртывание автоматически будет пропущено.
 
 ---
 
-# 18. Краткая шпаргалка
+## 9. Типичные проблемы CD
 
-| Что нужно сделать | Команда |
-|---|---|
-| Скачать образ | `docker pull nginx` |
-| Посмотреть образы | `docker images` |
-| Запустить контейнер | `docker run nginx` |
-| Запустить в фоне | `docker run -d nginx` |
-| Пробросить порт | `docker run -p 8080:80 nginx` |
-| Список контейнеров | `docker ps -a` |
-| Остановить контейнер | `docker stop name` |
-| Запустить контейнер | `docker start name` |
-| Удалить контейнер | `docker rm name` |
-| Посмотреть логи | `docker logs name` |
-| Войти в контейнер | `docker exec -it name sh` |
-| Собрать образ | `docker build -t app .` |
-| Запустить Compose | `docker compose up -d` |
-| Собрать и запустить | `docker compose up -d --build` |
-| Остановить Compose | `docker compose down` |
-| Посмотреть Compose | `docker compose ps` |
-| Посмотреть логи Compose | `docker compose logs -f` |
-| Посмотреть volumes | `docker volume ls` |
-| Посмотреть сети | `docker network ls` |
-| Проверить конфигурацию | `docker compose config` |
+### 9.1. Ошибка авторизации в GHCR
+
+Возможные причины:
+
+- Неправильно указан registry.
+- Не хватает `packages: write`.
+- Используется неверный токен.
+- Пакет имеет ограничения доступа.
+
+Проверить:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+```
+
+И настройки шага авторизации.
+
+### 9.2. Ошибка при сборке Docker-образа
+
+Возможные причины:
+
+- Неправильный `context`.
+- Отсутствует Dockerfile.
+- Ошибка в командах Dockerfile.
+- Файл исключён через `.dockerignore`.
+- Не хватает необходимых файлов для сборки.
+
+Проверить, что:
+
+```yaml
+context: ./server
+```
+
+соответствует расположению Dockerfile сервера.
+
+Для клиента:
+
+```yaml
+context: ./client
+```
+
+### 9.3. Docker Publish пропускается
+
+Проверить:
+
+- Успешно ли завершился Server CI.
+- Успешно ли завершился Client CI.
+- Выполнено ли условие `if`.
+- Запущен ли workflow через `push`.
+- Отправлен ли коммит в `master`.
+
+Помнить: `needs` блокирует публикацию при ошибке зависимых задач.
+
+### 9.4. Образ не скачивается с VPS
+
+Возможные причины:
+
+- VPS не авторизован в GHCR.
+- Пакет приватный.
+- Неправильно указано имя образа.
+- Используется несуществующий тег.
+- На сервере нет доступа к интернету.
+
+Проверить адрес образа и выполнить авторизацию через Docker CLI.
 
 ---
 
-# 19. Как правильно думать о Docker
+## 10. Алгоритм написания CD с нуля
 
-При работе с Docker полезно разделять ответственность:
+Этот раздел нужен как последовательность действий при добавлении CD в другой проект.
 
-- **Dockerfile** отвечает за то, как собрать образ приложения.
-- **.dockerignore** отвечает за то, какие файлы не попадут в build context.
-- **docker-compose.yml** отвечает за то, какие сервисы запускать и как они взаимодействуют.
-- **.env** отвечает за настройки и переменные окружения.
-- **Volumes** отвечают за сохранение данных.
-- **Networks** отвечают за взаимодействие контейнеров.
+### Шаг 1. Определить, что именно доставляем
 
-Главная идея:
+Например:
 
-Не нужно вручную настраивать каждый компьютер, сервер или контейнер. Нужно один раз описать окружение в конфигурационных файлах, а затем воспроизводимо запускать его командами Docker.
+- Docker-образ Backend;
+- Docker-образ Frontend;
+- готовую сборку;
+- архив приложения.
 
-**Хороший результат обучения:** ты должен уметь взять новый Node.js-проект, самостоятельно написать Dockerfile, исключить ненужные файлы через .dockerignore, подключить PostgreSQL через Docker Compose, настроить переменные окружения и объяснить, почему каждый параметр находится именно там.
+В нашем проекте доставляются два Docker-образа.
+
+### Шаг 2. Определить место хранения
+
+Например:
+
+- GitHub Container Registry;
+- Docker Hub;
+- другой Container Registry.
+
+В нашем проекте используется GHCR.
+
+### Шаг 3. Определить условие публикации
+
+Нужно решить:
+
+- На какой ветке публиковать?
+- При каком событии?
+- Нужно ли ждать успешного CI?
+- Нужно ли публиковать образы при Pull Request?
+
+В нашем проекте публикация выполняется только при `push` в `master`.
+
+### Шаг 4. Настроить права доступа
+
+Определить, какие разрешения нужны workflow.
+
+Для GHCR:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+```
+
+### Шаг 5. Авторизоваться в реестре
+
+Использовать подходящий Docker login action и безопасный токен.
+
+### Шаг 6. Собрать Docker-образы
+
+Указать:
+
+- Dockerfile;
+- build context;
+- необходимые build arguments;
+- платформы, если требуется.
+
+### Шаг 7. Определить теги
+
+Например:
+
+```text
+latest
+sha-<COMMIT_SHA>
+```
+
+### Шаг 8. Опубликовать образы
+
+Использовать Docker Build Push Action с:
+
+```yaml
+push: true
+```
+
+### Шаг 9. Проверить результат
+
+Убедиться, что образы появились в реестре и доступны для скачивания.
+
+### Шаг 10. Добавить Deploy
+
+Если требуется автоматический запуск приложения на сервере, добавить отдельный job, который зависит от публикации.
+
+---
+
+## 11. Полезные официальные ресурсы
+
+- [GitHub Actions](https://docs.github.com/en/actions)
+- [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+- [Docker Buildx](https://docs.docker.com/build/)
+- [Docker Build Push Action](https://github.com/docker/build-push-action)
+- [Docker Login Action](https://github.com/docker/login-action)
+- [Docker Compose](https://docs.docker.com/compose/)
+- [GitHub Actions Secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+
+---
+
+## 12. Главное, что нужно запомнить
+
+При написании CD нужно ответить на следующие вопросы:
+
+1. **Что доставляем?** — Docker-образ или другой артефакт.
+2. **Куда доставляем?** — GHCR, Docker Hub или другой реестр.
+3. **Когда публикуем?** — `on`, `if`.
+4. **Какие проверки должны завершиться успешно?** — `needs`.
+5. **Какие права нужны?** — `permissions`.
+6. **Как авторизоваться?** — Docker Login и Secrets.
+7. **Как собрать образ?** — Docker Buildx и Docker Build Push Action.
+8. **Как назвать версию?** — Docker tags.
+9. **Как проверить публикацию?** — GHCR и `docker pull`.
+10. **Как запустить приложение?** — Docker Compose на целевом сервере.
+
+**Главная идея:** CD — это автоматизированная доставка подготовленной версии приложения до места, откуда её можно развернуть. В нашем проекте этот процесс уже включает сборку и публикацию Docker-образов. Следующий логичный этап — автоматическое получение этих образов и запуск приложения на VPS.
+
